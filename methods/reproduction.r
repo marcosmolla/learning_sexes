@@ -63,7 +63,7 @@ setGeneric('reproduction', function(setup, indDF, mod) standardGeneric('reproduc
 setMethod(f = 'reproduction', signature = c(setup='data.frame', indDF='matrix', mod='ANY'), definition = function(setup, indDF, mod){
 	ID <- which(indDF[,'nRound']<0) # select individuals that were marked as dead by ageAndDie()
  	alive <- indDF[,'nRound']>0 # individauls which are still alive
-  m <- indDF[,"S"]==0 # indicating males (note, this is legacy)
+  m <- indDF[,"S"]==0 # 0 indicating males
 
   # Reproductive Constraints
   reprul <- setup$reprorule
@@ -77,11 +77,12 @@ setMethod(f = 'reproduction', signature = c(setup='data.frame', indDF='matrix', 
   }
 
   if(reprul=='var'){ # selecting by highest variance
-    ordered <- order(indDF[m & alive,'fitness_variance'], decreasing=FALSE, na.last = NA) #orders by fitness values, in decreasing order because NA's are put at the bottom, largest . NA's are now removed.#This includes dead individuals!
-    minn <- round(sum(m&alive)*setup$x)
-    if(minn>length(ordered)) minn <- length(ordered) # in case there are individuals included with fitnes NA, reduce it to the number of above individuals with fitness != NA
-    lowestreproducingmale <- indDF[m&alive,'id'][ordered][ifelse(minn<1,1,minn)] #returns position of x-th lowest male.
-    male <- (indDF[,"fitness_variance"] <= indDF[lowestreproducingmale, 'fitness_variance']) & m & alive #returns true if fitness exceeds lowest reproducing male and that male is alive!
+    stop("Rule 'var' not defined. Check reproduction.r code!")
+    # ordered <- order(indDF[m & alive,'fitness_variance'], decreasing=FALSE, na.last = NA) #orders by fitness values, in decreasing order because NA's are put at the bottom, largest . NA's are now removed.#This includes dead individuals!
+    # minn <- round(sum(m&alive)*setup$x)
+    # if(minn>length(ordered)) minn <- length(ordered) # in case there are individuals included with fitnes NA, reduce it to the number of above individuals with fitness != NA
+    # lowestreproducingmale <- indDF[m&alive,'id'][ordered][ifelse(minn<1,1,minn)] #returns position of x-th lowest male.
+    # male <- (indDF[,"fitness_variance"] <= indDF[lowestreproducingmale, 'fitness_variance']) & m & alive #returns true if fitness exceeds lowest reproducing male and that male is alive!
     }
   if(reprul!="fit"&reprul!="var") {stop("At the moment there is only fit and var implemented!")}
 
@@ -91,4 +92,78 @@ setMethod(f = 'reproduction', signature = c(setup='data.frame', indDF='matrix', 
 
 
 return(indDF)
+})
+
+
+eligible <- function(x, threshold){
+  if(length(x)==0){
+    return(integer(0))
+  } else {
+    if(is.null(nrow(x))){ # that is the case when only one value was handed over
+      return( as.numeric(x["id"]) )
+    } else {
+      # x[,"fitness"] %>% percent_rank() >= 1-threshold -> who
+      x[,"fitness"] %>% order(decreasing=T) -> o
+      id <- x[o,"id"][ 1:( length(x[,"id"])*threshold ) ]
+      # stop("check this ranking thingy again")
+      return( id )
+    }
+  }
+}
+
+# Define sexual reproduction function
+# This function is specifically written for the sexual reproduction version of the model
+setGeneric('sexreproduction', function(setup, indDF) standardGeneric('sexreproduction'))
+setMethod(f = 'sexreproduction', signature = c(setup='data.frame', indDF='matrix'), definition = function(setup, indDF){
+  # Individauls which are still alive
+  alive <- indDF[,'nRound']>0
+  
+  # Determine eligible individuals for reproduction
+  females <- eligible(x=indDF[alive & !is.na(indDF[,"fitness"]) & rowSums(indDF[,c("yield","yield2")])>=setup$minIncome & indDF[,"S"]==1, c("id", "fitness")], threshold=setup$xf)
+    males <- eligible(x=indDF[alive & !is.na(indDF[,"fitness"]) &                                                         indDF[,"S"]==0, c("id", "fitness")], threshold=setup$xm) 
+    # males <- eligible(x=indDF[alive & !is.na(indDF[,"fitness"]) & indDF[,"yield"]>=setup$minIncome & indDF[,"S"]==0, c("id", "fitness")], threshold=setup$xm) 
+
+  # For reproduction, at least one male and one female is required
+  if(length(males)>0 & length(females)>0){
+    # In this case there can be reproduction
+    # Choose Mothers (either with realtive to fitness, or with equal probabilities)
+    if(setup$highestFitnessIsEverything) probF <- indDF[females, "fitness"] else probF <- NULL
+    mothers <- mySample(n=females, size=sum(!alive), replace=T, prob=probF)
+    # Choose Fathers (either with realtive to fitness, or with equal probabilities)
+    if(setup$highestFitnessIsEverything) probM <- indDF[  males, "fitness"] else probM <- NULL
+    fathers <- mySample(n=  males, size=sum(!alive), replace=T, prob=probM)
+    
+    # Now we will choose the genes inherited by the two parents, for each new individual 
+    for(i in 1:sum(!alive)){
+      ID <- which(!alive)[i]
+      # Determine female genes (one from the mother, one from the father)
+      indDF[ID, c("f1","f2")] <- c( mySample(indDF[mothers[i], c("f1","f2")], size=1), mySample(indDF[fathers[i], c("f1","f2")], size=1) )
+      # Determine   male genes (one from the mother, one from the father)
+      indDF[ID, c("m1","m2")] <- c( mySample(indDF[mothers[i], c("m1","m2")], size=1), mySample(indDF[fathers[i], c("m1","m2")], size=1) )
+      
+      # # Add some noise (ONLY FOR FREE INNOVATEPROP)
+      # indDF[ID, c("f1","f2","m1","m2")] <- round(rnorm(n=4, mean=indDF[ID, c("f1","f2","m1","m2")], sd=0.1),2)
+      # indDF[ID, c("f1","f2","m1","m2")][indDF[ID, c("f1","f2","m1","m2")]>1] <- 1
+      # indDF[ID, c("f1","f2","m1","m2")][indDF[ID, c("f1","f2","m1","m2")]<0] <- 0
+      # Mutation (ONLY FOR FIXED INNOVATEPROP)
+      indDF[ID, c("f1","f2","m1","m2")] <- abs((runif(4,0,1)<setup$mutationRate) - indDF[ID, c("f1","f2","m1","m2")])
+      
+      # Determine sex of the newborn
+      indDF[ID, "S"] <- sample(c(0,1), size=1)
+      
+      # Determine innovation proportion based on sex
+      # if(indDF[ID, "S"]==1) iP <- round(mean(indDF[ ID , c("f1","f2")]), 2)  else iP <- round(mean(indDF[ ID , c("m1","m2")]), 2) # for free innnovateProp 
+      if(indDF[ID, "S"]==1) iP <- round(mean(indDF[ ID , c("f1","f2")]), 1)  else iP <- round(mean(indDF[ ID , c("m1","m2")]), 1) # for fixed innovateProp
+      indDF[ ID ,"innovateProp"] <- iP
+      
+      # Reset data frame to accomodate newborn
+      indDF[ ID , which(!colnames(indDF)%in%c('id','innovateProp','S',"m1","m2","f1","f2")) ] <- 0
+      indDF[ ID ,"nRound" ] <- 1
+    }
+    
+  } else {
+    indDF[ !alive ,"nRound" ] <- -100
+  }
+  
+  return(indDF)
 })
