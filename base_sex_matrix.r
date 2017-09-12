@@ -37,7 +37,7 @@ if(length(args)!=0){ # CSF hands over a process number, if there is a queue vari
 } else { #END CONDOR
   ### For local simulations:
   ### Load methods
-  setwd('~/Dropbox/Programming/R/learning_sexes/methods/')
+  setwd('~/Documents/Programming/R/learning_sexes/methods/')
   l <- lapply(list.files(), source)
   ### set queue to 1
   queue <- 1
